@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import os
-from openpyxl.styles import Border, Side
+import gspread
+import json
 
-# Nama file Excel untuk menyimpan data
-NAMA_FILE = "Data_Presensi_Guru.xlsx"
+# --- KONFIGURASI GOOGLE SHEETS ---
+# GANTI TULISAN DI BAWAH DENGAN LINK GOOGLE SHEETS ANDA SENDIRI:
+URL_GOOGLE_SHEET = "https://docs.google.com/spreadsheets/d/1OPsXtDT_jcJhCdouScf7zXFW417G5QddAmWFzzMxmK8/edit?usp=sharing"
 
 # 1. Daftar 16 Nama Guru (Sudah diurutkan)
 daftar_guru = [
@@ -26,7 +27,7 @@ daftar_mapel = [
 # 3. Daftar Status Kehadiran
 daftar_status = ["Pilih Status...", "Hadir", "Tidak hadir (Tanpa alasan)", "Izin (Dengan alasan)", "Sakit"]
 
-# CSS
+# CSS Warna Latar
 st.markdown("""
 <style>
 .stApp { background-color: #D6EAF8; }
@@ -58,48 +59,35 @@ with st.form("formulir_kehadiran"):
     tugas = st.text_area("5. Tugas yang diberikan (Kosongkan jika tidak ada)")
     tombol_simpan = st.form_submit_button("💾 Simpan Data")
 
-# PROSES SIMPAN
+# PROSES SIMPAN KE GOOGLE SHEETS
 if tombol_simpan:
     if nama_guru == "Pilih Guru..." or mapel == "Pilih Mata Pelajaran..." or status == "Pilih Status...":
         st.error("⚠️ Gagal disimpan! Harap pastikan Nama Guru, Mata Pelajaran, dan Status sudah dipilih.")
     else:
-        data_baru = pd.DataFrame({
-            "Tanggal": [tanggal.strftime("%d-%m-%Y")], "Nama Guru": [nama_guru],
-            "Mata Pelajaran": [mapel], "Status Kehadiran": [status], "Tugas": [tugas]
-        })
+        try:
+            # Mengambil Kunci Rahasia dari brankas Streamlit
+            kunci_dict = json.loads(st.secrets["gcp_service_account"])
+            
+            # Menghubungkan ke Google Sheets
+            gc = gspread.service_account_from_dict(kunci_dict)
+            sh = gc.open_by_url(URL_GOOGLE_SHEET)
+            worksheet = sh.sheet1
+            
+            # Menyiapkan data
+            data_baru = [
+                tanggal.strftime("%d-%m-%Y"),
+                nama_guru,
+                mapel,
+                status,
+                tugas
+            ]
+            
+            # Menambahkan data ke baris terbawah Google Sheets secara otomatis
+            worksheet.append_row(data_baru)
+            
+            st.success(f"✅ Data kehadiran {nama_guru} berhasil masuk ke Google Sheets Anda secara Real-Time!")
+        except Exception as e:
+            st.error(f"❌ Terjadi kesalahan: {e}. Pastikan Kunci Rahasia dan Link Google Sheets sudah benar.")
 
-        if os.path.exists(NAMA_FILE):
-            df_lama = pd.read_excel(NAMA_FILE)
-            df_gabung = pd.concat([df_lama, data_baru], ignore_index=True)
-        else:
-            df_gabung = data_baru
-
-        with pd.ExcelWriter(NAMA_FILE, engine='openpyxl') as writer:
-            df_gabung.to_excel(writer, index=False, sheet_name='Data Kehadiran')
-            worksheet = writer.sheets['Data Kehadiran']
-            garis_tipis = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-            for col in worksheet.columns:
-                max_length = 0
-                column_letter = col[0].column_letter
-                for cell in col:
-                    cell.border = garis_tipis
-                    try:
-                        if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
-                    except: pass
-                worksheet.column_dimensions[column_letter].width = max_length + 2
-
-        st.success(f"✅ Data kehadiran {nama_guru} berhasil disimpan!")
-
-# === TOMBOL UNDUH DATA EXCEL (TAMBAHAN BARU) ===
 st.markdown("---")
-st.subheader("📥 Bagian Admin (Unduh Rekap Data)")
-if os.path.exists(NAMA_FILE):
-    with open(NAMA_FILE, "rb") as file:
-        st.download_button(
-            label="Unduh File Excel Kehadiran",
-            data=file,
-            file_name="Rekap_Presensi_Guru.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.info("Belum ada data yang dimasukkan, file Excel belum dibuat.")
+st.markdown("📊 **Data secara otomatis terekap ke Google Sheets.** Anda bisa melihatnya kapan saja di HP/Laptop.")
